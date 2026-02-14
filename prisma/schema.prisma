@@ -1,0 +1,264 @@
+// Prisma schema for Shop POS Application
+// PostgreSQL database with comprehensive POS features
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// User roles enum
+enum Role {
+  ADMIN
+  MANAGER
+  CASHIER
+}
+
+// Order status enum
+enum OrderStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+  REFUNDED
+}
+
+// Payment method enum
+enum PaymentMethod {
+  CASH
+  CARD
+  DIGITAL
+}
+
+// User model with authentication
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  passwordHash  String
+  firstName     String
+  lastName      String
+  role          Role      @default(CASHIER)
+  isActive      Boolean   @default(true)
+  lastLoginAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  orders        Order[]
+  sessions      Session[]
+
+  @@map("users")
+}
+
+// Session management for secure authentication
+model Session {
+  id            String    @id @default(cuid())
+  userId        String
+  token         String    @unique
+  expiresAt     DateTime
+  ipAddress     String?
+  userAgent     String?
+  createdAt     DateTime  @default(now())
+
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([userId])
+  @@map("sessions")
+}
+
+// Product categories
+model Category {
+  id          String    @id @default(cuid())
+  name        String
+  description String?
+  color       String    @default("#3B82F6")
+  sortOrder   Int       @default(0)
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relations
+  products    Product[]
+
+  @@map("categories")
+}
+
+// Products inventory
+model Product {
+  id            String    @id @default(cuid())
+  sku           String    @unique
+  name          String
+  description   String?
+  categoryId    String
+  price         Decimal   @db.Decimal(10, 2)
+  costPrice     Decimal?  @db.Decimal(10, 2)
+  barcode       String?
+  image         String?
+  unit          String    @default("piece")
+  stockQuantity Int       @default(0)
+  minStock      Int       @default(0)
+  isActive      Boolean   @default(true)
+  isTaxable     Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  category      Category  @relation(fields: [categoryId], references: [id])
+  orderItems    OrderItem[]
+  stockMovements StockMovement[]
+
+  @@index([sku])
+  @@index([barcode])
+  @@index([categoryId])
+  @@map("products")
+}
+
+// Stock movement tracking
+model StockMovement {
+  id            String    @id @default(cuid())
+  productId     String
+  type          String    // IN, OUT, ADJUSTMENT, RETURN
+  quantity      Int
+  previousStock Int
+  newStock      Int
+  reason        String?
+  reference     String?   // Order ID or reference number
+  createdAt     DateTime  @default(now())
+
+  product       Product   @relation(fields: [productId], references: [id])
+
+  @@index([productId])
+  @@index([createdAt])
+  @@map("stock_movements")
+}
+
+// Customers for loyalty and tracking
+model Customer {
+  id            String    @id @default(cuid())
+  memberCode    String    @unique
+  firstName     String
+  lastName      String
+  email         String?
+  phone         String?
+  address       String?
+  loyaltyPoints Int       @default(0)
+  totalSpent    Decimal   @default(0) @db.Decimal(12, 2)
+  visitCount    Int       @default(0)
+  note          String?
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  orders        Order[]
+
+  @@index([memberCode])
+  @@index([email])
+  @@map("customers")
+}
+
+// Sales orders
+model Order {
+  id              String        @id @default(cuid())
+  orderNumber     String        @unique
+  customerId      String?
+  userId          String
+  status          OrderStatus   @default(PENDING)
+  paymentMethod   PaymentMethod?
+  subtotal        Decimal       @default(0) @db.Decimal(10, 2)
+  taxAmount       Decimal       @default(0) @db.Decimal(10, 2)
+  discountAmount  Decimal       @default(0) @db.Decimal(10, 2)
+  totalAmount     Decimal       @default(0) @db.Decimal(10, 2)
+  amountPaid      Decimal       @default(0) @db.Decimal(10, 2)
+  changeAmount    Decimal       @default(0) @db.Decimal(10, 2)
+  profit          Decimal       @default(0) @db.Decimal(10, 2)
+  note            String?
+  completedAt     DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  // Relations
+  customer        Customer?     @relation(fields: [customerId], references: [id])
+  user           User          @relation(fields: [userId], references: [id])
+  items          OrderItem[]
+
+  @@index([orderNumber])
+  @@index([status])
+  @@index([createdAt])
+  @@index([userId])
+  @@index([customerId])
+  @@map("orders")
+}
+
+// Order line items
+model OrderItem {
+  id            String    @id @default(cuid())
+  orderId       String
+  productId     String
+  quantity      Int
+  unitPrice     Decimal   @db.Decimal(10, 2)
+  discount      Decimal   @default(0) @db.Decimal(10, 2)
+  totalPrice   Decimal   @db.Decimal(10, 2)
+  costPrice     Decimal?  @db.Decimal(10, 2)
+  profit        Decimal   @default(0) @db.Decimal(10, 2)
+  createdAt     DateTime  @default(now())
+
+  // Relations
+  order         Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product       Product   @relation(fields: [productId], references: [id])
+
+  @@index([orderId])
+  @@index([productId])
+  @@map("order_items")
+}
+
+// Daily cash register tracking
+model CashDrawer {
+  id            String    @id @default(cuid())
+  userId        String
+  openingBalance Decimal  @default(0) @db.Decimal(10, 2)
+  closingBalance Decimal?
+  cashIn        Decimal   @default(0) @db.Decimal(10, 2)
+  cashOut       Decimal   @default(0) @db.Decimal(10, 2)
+  salesTotal    Decimal   @default(0) @db.Decimal(10, 2)
+  status        String    @default("OPEN") // OPEN, CLOSED
+  openedAt      DateTime  @default(now())
+  closedAt      DateTime?
+
+  @@index([userId])
+  @@index([status])
+  @@map("cash_drawers")
+}
+
+// System settings
+model Setting {
+  id          String    @id @default(cuid())
+  key         String    @unique
+  value       String
+  description String?
+  updatedAt   DateTime  @updatedAt
+
+  @@map("settings")
+}
+
+// Audit log for security and compliance
+model AuditLog {
+  id          String    @id @default(cuid())
+  userId      String?
+  action      String
+  entity      String
+  entityId    String?
+  oldValues   Json?
+  newValues   Json?
+  ipAddress   String?
+  userAgent  String?
+  createdAt   DateTime  @default(now())
+
+  @@index([userId])
+  @@index([entity])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
