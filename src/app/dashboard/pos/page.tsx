@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   Search,
   Plus,
@@ -13,6 +13,8 @@ import {
   User,
   Loader2,
   Check,
+  Barcode,
+  AlertCircle,
 } from 'lucide-react';
 import { formatCurrency } from '@/lib/utils';
 
@@ -55,6 +57,10 @@ export default function POSPage() {
   const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'CARD' | 'DIGITAL'>('CASH');
   const [amountPaid, setAmountPaid] = useState(0);
   const [success, setSuccess] = useState<string | null>(null);
+  const [barcode, setBarcode] = useState('');
+  const [barcodeError, setBarcodeError] = useState<string | null>(null);
+  const [lastScannedProduct, setLastScannedProduct] = useState<Product | null>(null);
+  const barcodeInputRef = useRef<HTMLInputElement>(null);
 
   // Fetch products and categories
   useEffect(() => {
@@ -80,7 +86,8 @@ export default function POSPage() {
 
   const filteredProducts = products.filter((product) => {
     const matchesSearch = product.name.toLowerCase().includes(search.toLowerCase()) ||
-      product.sku.toLowerCase().includes(search.toLowerCase());
+      product.sku.toLowerCase().includes(search.toLowerCase()) ||
+      (product.barcode && product.barcode.toLowerCase().includes(search.toLowerCase()));
     const matchesCategory = !selectedCategory || product.category.id === selectedCategory;
     return matchesSearch && matchesCategory && product.stockQuantity > 0;
   });
@@ -108,6 +115,55 @@ export default function POSPage() {
       ];
     });
   };
+
+  // Add product to cart by barcode
+  const addToCartByBarcode = useCallback((barcode: string) => {
+    const product = products.find(p => 
+      p.barcode === barcode || p.sku.toLowerCase() === barcode.toLowerCase()
+    );
+    
+    if (product) {
+      if (product.stockQuantity <= 0) {
+        setBarcodeError(`${product.name} is out of stock`);
+        setTimeout(() => setBarcodeError(null), 3000);
+        return;
+      }
+      addToCart(product);
+      setLastScannedProduct(product);
+      setBarcodeError(null);
+      setTimeout(() => setLastScannedProduct(null), 2000);
+    } else {
+      setBarcodeError(`Product not found: ${barcode}`);
+      setTimeout(() => setBarcodeError(null), 3000);
+    }
+  }, [products, addToCart]);
+
+  // Handle barcode input submission
+  const handleBarcodeSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (barcode.trim()) {
+      addToCartByBarcode(barcode.trim());
+      setBarcode('');
+    }
+  };
+
+  // Focus barcode input on Ctrl+B or F2
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey && e.key === 'b') || e.key === 'F2') {
+        e.preventDefault();
+        barcodeInputRef.current?.focus();
+      }
+      // ESC to clear barcode input
+      if (e.key === 'Escape') {
+        setBarcode('');
+        barcodeInputRef.current?.blur();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   const updateQuantity = (productId: string, quantity: number) => {
     if (quantity <= 0) {
@@ -206,11 +262,42 @@ export default function POSPage() {
       <div className="flex-1 flex flex-col">
         {/* Search and categories */}
         <div className="mb-4 space-y-3">
+          {/* Barcode Scanner Input */}
+          <form onSubmit={handleBarcodeSubmit} className="relative">
+            <Barcode className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
+            <input
+              ref={barcodeInputRef}
+              type="text"
+              placeholder="Scan barcode... (Ctrl+B to focus)"
+              value={barcode}
+              onChange={(e) => setBarcode(e.target.value)}
+              className={`w-full pl-10 pr-4 py-3 rounded-lg border-2 focus:ring-2 ${
+                barcodeError 
+                  ? 'border-red-500 focus:ring-red-200' 
+                  : lastScannedProduct 
+                    ? 'border-green-500 focus:ring-green-200'
+                    : 'border-gray-200 focus:ring-primary-500'
+              }`}
+            />
+            {barcodeError && (
+              <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1 text-red-500">
+                <AlertCircle className="h-4 w-4" />
+                <span className="text-sm">{barcodeError}</span>
+              </div>
+            )}
+            {lastScannedProduct && !barcodeError && (
+              <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1 text-green-500">
+                <Check className="h-4 w-4" />
+                <span className="text-sm">{lastScannedProduct.name}</span>
+              </div>
+            )}
+          </form>
+
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
             <input
               type="search"
-              placeholder="Search products by name or SKU..."
+              placeholder="Search products by name..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="w-full pl-10 pr-4 py-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-primary-500"
@@ -258,7 +345,11 @@ export default function POSPage() {
                   key={product.id}
                   onClick={() => addToCart(product)}
                   disabled={product.stockQuantity === 0}
-                  className="p-4 bg-white rounded-xl border border-gray-200 hover:border-primary-300 hover:shadow-md transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed"
+                  className={`p-4 bg-white rounded-xl border transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed ${
+                    lastScannedProduct?.id === product.id
+                      ? 'border-green-500 shadow-lg ring-2 ring-green-200'
+                      : 'border-gray-200 hover:border-primary-300 hover:shadow-md'
+                  }`}
                 >
                   <div className="aspect-square bg-gray-100 rounded-lg mb-3 flex items-center justify-center">
                     <span className="text-2xl">📦</span>
